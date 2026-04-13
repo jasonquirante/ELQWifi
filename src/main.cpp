@@ -7,6 +7,10 @@
 #include "web.h"
 
 #define SD_CS 5
+constexpr int SD_SCK_PIN = 18;
+constexpr int SD_MISO_PIN = 19;
+constexpr int SD_MOSI_PIN = 23;
+constexpr uint32_t SD_SAFE_FREQ_HZ = 4000000U;
 
 bool sdCardAvailable = false;
 const char kBootLogPath[] = "/boot.log";
@@ -44,15 +48,18 @@ void setup() {
   delay(1000);
   Serial.println("\n[ELQWifi] Booting...");
 
-  if (SD.begin(SD_CS, SPI, 25000000U)) {
+  SPI.begin(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS);
+  if (SD.begin(SD_CS, SPI, SD_SAFE_FREQ_HZ, "/sd", 5, false)) {
     sdCardAvailable = true;
     Serial.println("[ELQWifi] microSD card mounted.");
+    Serial.println("[ELQWifi] Web root expected at /www on SD card.");
     File file = SD.open(kBootLogPath, FILE_WRITE);
     if (file) {
       file.println("ELQWifi boot " + String(millis()));
       file.close();
     }
   } else {
+    SD.end();
     Serial.println("[ELQWifi] microSD card mount failed.");
   }
 

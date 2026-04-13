@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0f1f2b" />
+    <title>ELQWifi Mission Console</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar panel">
+        <div class="brand-lockup">
+          <div class="brand-mark">ELQ</div>
+          <div>
+            <div class="brand-name">ELQWifi</div>
+            <div class="brand-subtitle">Mission console for telemetry, logs, and cellular control</div>
+          </div>
+        </div>
+
+        <div class="topbar-meta">
+          <div class="chip">
+            <span>Status</span>
+            <strong id="wifiStatusTop" class="chip-value">Connected</strong>
+          </div>
+          <div class="chip">
+            <span>Radio</span>
+            <strong class="chip-value">SIM7600G</strong>
+          </div>
+          <div class="chip">
+            <span>Storage</span>
+            <strong class="chip-value">SD /www</strong>
+          </div>
+        </div>
+      </header>
+
+      <nav class="view-nav panel" aria-label="Portal navigation">
+        <button class="view-nav-item active" type="button" data-view="home">
+          <span class="nav-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11.5 12 4l9 7.5"/><path d="M5 10.5V20h14v-9.5"/><path d="M9 20v-6h6v6"/></svg>
+          </span>
+          <span>Home</span>
+        </button>
+        <button class="view-nav-item" type="button" data-view="messages">
+          <span class="nav-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v10H7l-3 3V5Z"/><path d="M8 9h8"/><path d="M8 12h5"/></svg>
+          </span>
+          <span>Messages</span>
+        </button>
+        <button class="view-nav-item" type="button" data-view="location">
+          <span class="nav-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s6-4.6 6-10a6 6 0 0 0-12 0c0 5.4 6 10 6 10Z"/><circle cx="12" cy="11" r="2.2"/></svg>
+          </span>
+          <span>Location</span>
+        </button>
+        <button class="view-nav-item" type="button" data-view="inbox">
+          <span class="nav-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16v12H4z"/><path d="M4 9h16"/><path d="m8 13 2 2 4-4"/></svg>
+          </span>
+          <span>Inbox</span>
+        </button>
+        <button class="view-nav-item" type="button" data-view="diagnostics">
+          <span class="nav-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Z"/><path d="M12 7v5l3 3"/></svg>
+          </span>
+          <span>Diagnostics</span>
+        </button>
+        <button class="view-nav-item" type="button" data-view="developer">
+          <span class="nav-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 18h.01"/><path d="M9.1 9a3 3 0 1 1 5.8 1c0 2-3 2-3 4"/><circle cx="12" cy="12" r="9"/></svg>
+          </span>
+          <span>Developer</span>
+        </button>
+      </nav>
+
+      <section class="view-panel panel is-active" data-view="home">
+        <section class="hero hero-split">
+          <div class="hero-copy">
+            <div class="eyebrow">ESP32 / SIM7600G / SD</div>
+            <h1>Mission console built for field use</h1>
+            <p>
+              Live telemetry, cellular diagnostics, and GPS-aware messaging in a clean, mobile-first interface.
+            </p>
+            <div class="portal-signin-row">
+              <button id="portalSignInBtn" type="button">Sign in to this Wi-Fi</button>
+              <span id="portalSignInStatus" class="portal-signin-status">Not signed in</span>
+            </div>
+          </div>
+
+          <div class="hero-metrics">
+            <div class="metric">
+              <span class="metric-label">Wi-Fi</span>
+              <span id="wifiStatus" class="status-pill neutral">Connecting</span>
+            </div>
+            <div class="metric">
+              <span class="metric-label">Last update</span>
+              <span id="lastUpdated" class="metric-value">--</span>
+            </div>
+            <div class="metric">
+              <span class="metric-label">GPS ping age</span>
+              <span id="lastGpsPingAge" class="metric-value">--</span>
+            </div>
+            <div class="metric">
+              <span class="metric-label">SD host</span>
+              <span class="metric-value">/www</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="stats-grid">
+          <article class="panel stat-card">
+            <span class="stat-label">GPS</span>
+            <strong id="gpsStatus" class="stat-value status-pill neutral">Waiting</strong>
+            <div id="gpsCoords" class="stat-detail mono">--</div>
+          </article>
+
+          <article class="panel stat-card">
+            <span class="stat-label">LTE</span>
+            <strong id="lteStatus" class="stat-value status-pill neutral">Waiting</strong>
+            <div id="rssi" class="stat-detail">RSSI --</div>
+            <div id="internetState" class="stat-detail">APN -- · waiting for session</div>
+          </article>
+
+          <article class="panel stat-card">
+            <span class="stat-label">SIM</span>
+            <strong id="simReady" class="stat-value">--</strong>
+            <div id="registered" class="stat-detail">CREG --</div>
+          </article>
+
+          <article class="panel stat-card">
+            <span class="stat-label">Attach</span>
+            <strong id="attached" class="stat-value">--</strong>
+            <div id="speed" class="stat-detail">DL / UL -- / --</div>
+          </article>
+        </section>
+      </section>
+
+      <section class="view-panel panel" data-view="messages">
+        <div class="section-head">
+          <div>
+            <div class="section-kicker">Messaging</div>
+            <h2>Template SMS</h2>
+          </div>
+          <p class="section-copy">Send a formatted message with your name, contact number, and live location preview.</p>
+        </div>
+        <div class="content-grid single-column">
+          <article class="panel side-panel">
+            <div class="sms-form">
+              <div class="sms-note">The message box below shows the exact template that will be sent, including current GPS location when available.</div>
+
+              <label for="smsSenderName">Sender name</label>
+              <input id="smsSenderName" type="text" placeholder="e.g. Juan Dela Cruz" maxlength="40" />
+
+              <label for="smsSenderContact">Sender contact number</label>
+              <input id="smsSenderContact" type="text" placeholder="e.g. +639XXXXXXXXX" maxlength="20" />
+
+              <label for="smsMessageBody">Alert message body</label>
+              <textarea id="smsMessageBody" rows="3" maxlength="220" placeholder="Type your alert message"></textarea>
+
+              <label for="smsTo">Phone number</label>
+              <input id="smsTo" type="text" placeholder="e.g. +639XXXXXXXXX" maxlength="20" />
+
+              <label for="smsMessage">Message preview (what will be sent)</label>
+              <textarea id="smsMessage" rows="6" readonly></textarea>
+
+              <button id="smsSendBtn" type="button">Send Template SMS</button>
+              <div id="smsStatus" class="sms-status">Idle</div>
+            </div>
+          </article>
+
+          <article class="panel side-panel">
+            <div class="panel-head">
+              <h2>Session logs</h2>
+            </div>
+            <pre id="logs">Loading logs...</pre>
+          </article>
+        </div>
+      </section>
+
+      <section class="view-panel panel" data-view="location">
+        <div class="section-head">
+          <div>
+            <div class="section-kicker">Location</div>
+            <h2>GPS and map</h2>
+          </div>
+          <p class="section-copy">Live coordinates, fix quality, and a direct Google Maps link from the current GNSS solution.</p>
+        </div>
+        <div class="content-grid single-column location-layout">
+          <article class="panel main-panel">
+            <div class="panel-head">
+              <h2>Navigation</h2>
+              <a id="gpsMap" href="#" target="_blank" rel="noopener">Open map</a>
+            </div>
+            <div class="map-box">
+              <div class="map-label">Current fix</div>
+              <div id="gpsCoordsLarge" class="map-value mono">--</div>
+              <div id="gpsDistance" class="map-distance">--</div>
+              <div id="gpsHint" class="map-hint">Waiting for satellites...</div>
+            </div>
+          </article>
+
+          <article class="panel side-panel">
+            <div class="location-grid">
+              <div class="location-card">
+                <span class="stat-label">GPS status</span>
+                <strong id="gpsStatusLocation" class="stat-value status-pill neutral">Waiting</strong>
+              </div>
+              <div class="location-card">
+                <span class="stat-label">Coords</span>
+                <div id="gpsCoordsLocation" class="stat-detail mono">--</div>
+              </div>
+              <div class="location-card">
+                <span class="stat-label">Altitude</span>
+                <div id="locationAltitude" class="stat-detail">--</div>
+              </div>
+              <div class="location-card">
+                <span class="stat-label">Raw GNSS</span>
+                <div id="gpsRaw" class="stat-detail mono">--</div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="view-panel panel" data-view="inbox">
+        <div class="section-head">
+          <div>
+            <div class="section-kicker">Inbox</div>
+            <h2>Received SMS</h2>
+          </div>
+          <p class="section-copy">Read messages currently stored on the SIM7600G modem inbox.</p>
+        </div>
+        <div class="content-grid single-column">
+          <article class="panel side-panel">
+            <div class="panel-head">
+              <h2>SIM Inbox</h2>
+              <button id="smsInboxRefreshBtn" class="inline-action" type="button">Refresh inbox</button>
+            </div>
+            <div id="smsInboxCards" class="inbox-cards" aria-live="polite">
+              <div class="inbox-empty">Loading inbox...</div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="view-panel panel" data-view="diagnostics">
+        <div class="section-head">
+          <div>
+            <div class="section-kicker">Hardware</div>
+            <h2>Modem diagnostics</h2>
+          </div>
+          <p class="section-copy">Real-time SIM7600G signal quality, registration, and attachment status.</p>
+        </div>
+        <div class="content-grid single-column">
+          <article class="panel side-panel">
+            <div class="panel-head">
+              <h2>Live modem health</h2>
+              <span id="diagLastUpdate" class="inline-action" style="background: transparent; border: none; padding: 0; cursor: default; color: var(--text-soft); font-size: 0.8rem;">--</span>
+            </div>
+            <div id="modemHealthGrid" class="modem-health-grid">
+              <div class="diag-card">
+                <span class="diag-label">Signal Quality</span>
+                <div id="diagSignalQuality" class="diag-value">--</div>
+                <div id="diagRssi" class="diag-detail">RSSI: --</div>
+              </div>
+              <div class="diag-card">
+                <span class="diag-label">Registration</span>
+                <div id="diagCreg" class="diag-value">--</div>
+                <div id="diagCregNote" class="diag-detail">--</div>
+              </div>
+              <div class="diag-card">
+                <span class="diag-label">Packet Domain</span>
+                <div id="diagCereg" class="diag-value">--</div>
+                <div id="diagCeregNote" class="diag-detail">--</div>
+              </div>
+              <div class="diag-card">
+                <span class="diag-label">Data Attach</span>
+                <div id="diagCgatt" class="diag-value">--</div>
+                <div id="diagCgattNote" class="diag-detail">--</div>
+              </div>
+              <div class="diag-card">
+                <span class="diag-label">SIM Status</span>
+                <div id="diagSimReady" class="diag-value">--</div>
+                <div id="diagSimNote" class="diag-detail">--</div>
+              </div>
+              <div class="diag-card">
+                <span class="diag-label">Data Connected</span>
+                <div id="diagDataConnected" class="diag-value">--</div>
+                <div id="diagIpAddress" class="diag-detail">IP: --</div>
+              </div>
+            </div>
+            <div class="diag-legend">
+              <p><strong>Interpreting the signals:</strong></p>
+              <ul>
+                <li><strong>Signal Quality:</strong> Excellent (≥-85 dBm) → Good (≥-95) → Fair (≥-105) → Weak</li>
+                <li><strong>Registration (CREG):</strong> 0=Not registered, 1=Home, 2=Searching, 5=Roaming</li>
+                <li><strong>Packet Domain (CEREG):</strong> Same scale. LTE registration separate from voice.</li>
+                <li><strong>Data Attach (CGATT):</strong> 0=Detached, 1=Attached. Must be 1 for data.</li>
+                <li><strong>Slow NETLIGHT blink (15s+):</strong> Usually indicates mode active but idle. Check power supply (should be ≥4V @ 800mA capacity).</li>
+              </ul>
+            </div>
+            <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid rgba(176, 223, 236, 0.2);">
+              <div class="section-kicker">RF Interference Test</div>
+              <p style="color: var(--text-soft); font-size: 0.9rem; margin-top: 8px;">
+                Disable GPS to check if it's interfering with LTE signal. Watch RSSI and registration before/after. If signal improves when GPS is off, RF interference is likely.
+              </p>
+              <div class="dual-action-row" style="margin-top: 12px;">
+                <button id="gpsTestOffBtn" class="button-ghost" type="button">Disable GPS</button>
+                <button id="gpsTestOnBtn" class="button-ghost" type="button">Enable GPS</button>
+              </div>
+              <div id="gpsTestResult" class="sms-status" style="margin-top: 10px;">Ready</div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="view-panel panel" data-view="developer">
+        <div class="section-head">
+          <div>
+            <div class="section-kicker">Developer</div>
+            <h2>Developer interface</h2>
+          </div>
+          <p class="section-copy">Learn about the project, reach the researcher, and review the design focus behind ELQDrone.</p>
+        </div>
+        <div class="about-grid">
+          <article class="about-card panel">
+            <div class="about-avatar">E</div>
+            <h3>Researcher profile</h3>
+            <p>
+              ELQDrone is a field console built around ESP32, SIM7600G, GPS, SMS, and SD-hosted web tools.
+              It was designed to support practical modem control, telemetry, and location-aware messaging.
+            </p>
+          </article>
+          <article class="about-card panel">
+            <h3>Contact us</h3>
+            <div class="sms-note">Reach the researchers on Facebook using the profiles below.</div>
+            <div class="dev-contact-list">
+              <a class="inline-action dev-contact-link" href="https://www.facebook.com/jqzsn" target="_blank" rel="noopener">
+                <img class="dev-photo" src="/developers/Jason.jpg" alt="Jason profile photo" loading="lazy" />
+                <span>Jason</span>
+              </a>
+              <a class="inline-action dev-contact-link" href="https://www.facebook.com/kathrynveraa" target="_blank" rel="noopener">
+                <img class="dev-photo" src="/developers/Katherine.png" alt="Katherine profile photo" loading="lazy" />
+                <span>Kath</span>
+              </a>
+              <a class="inline-action dev-contact-link" href="https://www.facebook.com/rosario.espadera.1/" target="_blank" rel="noopener">
+                <img class="dev-photo" src="/developers/Rio.jpg" alt="Rio profile photo" loading="lazy" />
+                <span>Rio</span>
+              </a>
+            </div>
+            <div class="dev-contact-hint">Use the Facebook profiles above to contact the project team directly.</div>
+          </article>
+          <article class="about-card panel">
+            <h3>Project focus</h3>
+            <ul>
+              <li>Research and development by the ELQDrone team</li>
+              <li>ESP32 firmware for cellular and GPS control</li>
+              <li>SIM7600G diagnostics, SMS, and network monitoring</li>
+              <li>SD-hosted portal served over the device Wi-Fi AP</li>
+              <li>Research-oriented workflow for field testing and logs</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>
