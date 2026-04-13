@@ -1,0 +1,10 @@
+.pio/
+.vscode/
+*.pioenvs/
+*.bin
+*.elf
+*.map
+*.lst
+*.pyc
+.DS_Store
+.env
