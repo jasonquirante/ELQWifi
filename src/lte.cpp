@@ -13,8 +13,8 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
-constexpr int LTE_UART_RX_PIN = 17;
-constexpr int LTE_UART_TX_PIN = 16;
+constexpr int LTE_UART_RX_PIN = 3; // RX0
+constexpr int LTE_UART_TX_PIN = 1; // TX0
 constexpr int LTE_PWRKEY_PIN = 4;
 constexpr uint32_t LTE_BAUD = 115200;
 constexpr uint32_t LTE_BAUD_FALLBACKS[] = {115200, 9600, 57600, 38400};
@@ -34,6 +34,7 @@ String configuredApn = "tm";
 String configuredApnUser = "";
 String configuredApnPass = "";
 constexpr int LTE_PDP_AUTH_PAP = 1;
+constexpr int LTE_PDP_AUTH_CHAP = 2;
 
 HardwareSerial lteSerial(2);
 uint32_t activeLteBaud = LTE_BAUD;
@@ -55,7 +56,29 @@ volatile uint32_t pppTxBytes = 0;
 bool pppAuthFallbackEnabled = false;
 unsigned long dataModeEnteredMs = 0;
 constexpr uint32_t LTE_PPP_BRINGUP_TIMEOUT_MS = 70000;
-LteData currentLteData = {false, false, false, -1, -1, -1, -1, -1, "", ""};
+LteData currentLteData = {false, false, false, false, -1, -1, -1, -1, -1, "", ""};
+
+void setPwrKeyIdle(bool activeLow) {
+  pinMode(LTE_PWRKEY_PIN, OUTPUT);
+  digitalWrite(LTE_PWRKEY_PIN, activeLow ? HIGH : LOW);
+}
+
+bool isPdpActiveFromResponse(const String& response) {
+  int cursor = 0;
+  while (true) {
+    const int idx = response.indexOf("+CGACT:", cursor);
+    if (idx == -1) {
+      break;
+    }
+    const int endLine = response.indexOf('\n', idx);
+    const String line = response.substring(idx, endLine == -1 ? response.length() : endLine);
+    if (line.indexOf("1,1") != -1) {
+      return true;
+    }
+    cursor = (endLine == -1) ? response.length() : endLine + 1;
+  }
+  return false;
+}
 
 int findTrailingInt(const String& line) {
   for (int i = line.length() - 1; i >= 0; --i) {
@@ -174,6 +197,7 @@ void resetPppSessionState(const char* reason) {
   pppHasIp = false;
   currentLteData.dataConnected = false;
   currentLteData.ipAddress = "";
+  currentLteData.pdpActive = false;
   dataModeActive = false;
   pppRxBytes = 0;
   pppTxBytes = 0;
@@ -443,6 +467,7 @@ bool activateAndVerifyPdpContext() {
   String response;
   // Deactivate any existing PDP context
   (void)lteSendCommand("AT+CGACT=0,1", response, 3000);
+  currentLteData.pdpActive = false;
   delay(500);
 
   // Activate PDP context for PPP dial
@@ -451,16 +476,22 @@ bool activateAndVerifyPdpContext() {
     return false;
   }
 
+  if (lteSendCommand("AT+CGACT?", response, 3000)) {
+    currentLteData.pdpActive = isPdpActiveFromResponse(response);
+  }
+
   // Confirm modem actually has a bearer IP before PPP dial.
   for (int attempt = 0; attempt < 6; ++attempt) {
     delay(1000);
     if (lteSendCommand("AT+CGPADDR=1", response, 2500) && hasPdpIpv4Address(response)) {
       Serial.println("[LTE] PDP context has valid IPv4 address.");
+      currentLteData.pdpActive = true;
       return true;
     }
   }
 
   Serial.println("[LTE] PDP context has no IPv4 address.");
+  currentLteData.pdpActive = false;
   return false;
 }
 
@@ -646,6 +677,7 @@ bool enterPppDataMode() {
   // Add configured APN first, then common Philippines carriers
   addApnCandidate(apn);
   addApnCandidate("tm");
+  addApnCandidate("tm.net");
   addApnCandidate("internet");           // TM Philippines
   addApnCandidate("internet.globe.com.ph"); // Globe Telecom
   addApnCandidate("mnet");               // Smart Communications
@@ -660,11 +692,18 @@ bool enterPppDataMode() {
       continue;
     }
 
-    // Apply PAP/none auth profile on PDP context for SIM7600 compatibility.
+    // Configure PDP auth only when credentials are provided.
     if (configuredApnUser.length() > 0 || configuredApnPass.length() > 0) {
-      if (!lteSendCommand((String("AT+CGAUTH=1,") + LTE_PDP_AUTH_PAP + ",\"" + configuredApnUser + "\",\"" + configuredApnPass + "\"").c_str(), response, 3000)) {
-        Serial.println("[LTE] AT+CGAUTH failed; continuing with modem defaults.");
+      const String papCmd = String("AT+CGAUTH=1,") + LTE_PDP_AUTH_PAP + ",\"" + configuredApnUser + "\",\"" + configuredApnPass + "\"";
+      if (!lteSendCommand(papCmd.c_str(), response, 3000)) {
+        Serial.println("[LTE] PAP auth rejected; trying CHAP...");
+        const String chapCmd = String("AT+CGAUTH=1,") + LTE_PDP_AUTH_CHAP + ",\"" + configuredApnUser + "\",\"" + configuredApnPass + "\"";
+        if (!lteSendCommand(chapCmd.c_str(), response, 3000)) {
+          Serial.println("[LTE] CHAP auth rejected; continuing with modem defaults.");
+        }
       }
+    } else {
+      Serial.println("[LTE] No APN credentials configured; skipping AT+CGAUTH.");
     }
 
     if (!activateAndVerifyPdpContext()) {
@@ -720,11 +759,8 @@ bool startInternetGateway() {
                                  configuredApnPass.c_str());
     Serial.println("[LTE] PPP auth mode: PAP/CHAP.");
   } else {
-    (void)esp_netif_ppp_set_auth(pppNetif,
-                                 static_cast<esp_netif_auth_type_t>(NETIF_PPP_AUTHTYPE_PAP | NETIF_PPP_AUTHTYPE_CHAP),
-                                 "",
-                                 "");
-    Serial.println("[LTE] PPP auth mode: PAP/CHAP (blank credentials).");
+    (void)esp_netif_ppp_set_auth(pppNetif, NETIF_PPP_AUTHTYPE_NONE, "", "");
+    Serial.println("[LTE] PPP auth mode: NONE (no credentials configured).");
   }
 #else
   Serial.println("[LTE] PPP auth support disabled in sdkconfig.");
@@ -790,10 +826,45 @@ bool sendAtAndWaitOk(uint32_t timeoutMs) {
 }
 
 bool probeModemAtBaud(uint32_t baud, int attempts, uint32_t timeoutMs) {
+  auto traceRawRx = [&](uint32_t windowMs) {
+    const unsigned long start = millis();
+    size_t seen = 0;
+    while (millis() - start < windowMs) {
+      while (lteSerial.available()) {
+        const uint8_t b = static_cast<uint8_t>(lteSerial.read());
+        if (seen < 24) {
+          Serial.print("[LTE] RX byte 0x");
+          if (b < 16) {
+            Serial.print('0');
+          }
+          Serial.println(b, HEX);
+        }
+        ++seen;
+      }
+      delay(5);
+    }
+    if (seen == 0) {
+      Serial.println("[LTE] RX trace: no bytes seen.");
+    } else {
+      Serial.print("[LTE] RX trace: total bytes seen = ");
+      Serial.println(seen);
+    }
+  };
+
   Serial.print("[LTE] Trying baud ");
   Serial.println(baud);
   lteSerial.begin(baud, SERIAL_8N1, activeUartRxPin, activeUartTxPin, activeUartInvert);
   delay(300);
+
+  // SIM7600 may start in autobaud mode; burst a few AT patterns to synchronize.
+  lteSerial.print("\r\n");
+  delay(20);
+  lteSerial.print("AT\r");
+  delay(20);
+  lteSerial.print("AT\r\n");
+  delay(120);
+
+  traceRawRx(120);
 
   for (int attempt = 1; attempt <= attempts; ++attempt) {
     Serial.print("[LTE] AT probe attempt ");
@@ -809,6 +880,7 @@ bool probeModemAtBaud(uint32_t baud, int attempts, uint32_t timeoutMs) {
       activeLteBaud = baud;
       return true;
     }
+    traceRawRx(80);
     Serial.println("timeout");
     delay(500);
   }
@@ -830,15 +902,14 @@ void dumpModemStatus() {
 }
 
 void pulsePwrKey(bool activeLow) {
-  pinMode(LTE_PWRKEY_PIN, OUTPUT);
-  digitalWrite(LTE_PWRKEY_PIN, activeLow ? HIGH : LOW);
+  setPwrKeyIdle(activeLow);
   delay(200);
   digitalWrite(LTE_PWRKEY_PIN, activeLow ? LOW : HIGH);
   delay(LTE_POWKEY_LOW_MS);
   digitalWrite(LTE_PWRKEY_PIN, activeLow ? HIGH : LOW);
   delay(200);
-  // Release the line so we don't accidentally hold PWRKEY asserted.
-  pinMode(LTE_PWRKEY_PIN, INPUT_PULLUP);
+  // Keep a deterministic deasserted level so PWRKEY does not float.
+  setPwrKeyIdle(activeLow);
 }
 
 void waitForModemBoot(const char* reason) {
@@ -957,7 +1028,7 @@ void lteInit() {
   lteSerial.begin(LTE_BAUD, SERIAL_8N1, LTE_UART_RX_PIN, LTE_UART_TX_PIN, activeUartInvert);
   delay(500);
 
-  pinMode(LTE_PWRKEY_PIN, INPUT_PULLUP);
+  setPwrKeyIdle(true);
   delay(50);
 
   Serial.println("[LTE] Checking if modem is already awake (passive probe window)...");

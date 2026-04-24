@@ -83,10 +83,13 @@ function setActiveView(viewName) {
 async function refreshPortalStatus() {
   try {
     const status = await fetchJson("/portal/status");
-    if (status.signedIn) {
-      setPortalSignInStatus("Signed in", true);
+    if (status.online) {
+      const ip = status.ipAddress && status.ipAddress !== "0.0.0.0" ? ` · ${status.ipAddress}` : "";
+      setPortalSignInStatus(`Internet online${ip}`, true);
+    } else if (status.signedIn) {
+      setPortalSignInStatus(status.reason || "Connected to portal", false);
     } else {
-      setPortalSignInStatus("Not signed in", false);
+      setPortalSignInStatus(status.reason || "Not signed in", false);
     }
   } catch {
     setPortalSignInStatus("Status unavailable", false);
@@ -95,7 +98,14 @@ async function refreshPortalStatus() {
 
 async function signInPortal() {
   const btn = document.getElementById("portalSignInBtn");
+  const voucherEl = document.getElementById("portalVoucher");
   if (!btn) {
+    return;
+  }
+
+  const code = voucherEl ? voucherEl.value.trim() : "";
+  if (!code) {
+    setPortalSignInStatus("Enter voucher code", false);
     return;
   }
 
@@ -103,12 +113,18 @@ async function signInPortal() {
   setPortalSignInStatus("Signing in...");
 
   try {
-    const response = await fetch("/portal/signin", { method: "POST" });
+    const response = await fetch("/portal/signin", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
     const payload = await response.json();
     if (!response.ok || !payload.ok) {
       setPortalSignInStatus("Sign in failed");
+    } else if (payload.online) {
+      setPortalSignInStatus("Internet online", true);
     } else {
-      setPortalSignInStatus("Signed in", true);
+      setPortalSignInStatus(payload.reason || "Signed in", false);
     }
   } catch {
     setPortalSignInStatus("Sign in failed");

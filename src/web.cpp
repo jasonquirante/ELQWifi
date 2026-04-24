@@ -6,6 +6,7 @@
 #include <DNSServer.h>
 #include <SPIFFS.h>
 #include <SD.h>
+#include <ArduinoJson.h>
 
 #include "lte.h"
 
@@ -21,9 +22,13 @@ DNSServer dnsServer;
 bool dnsCaptiveActive = false;
 bool portalSignedIn = false;
 bool spiffsReady = false;
+unsigned long activeSessionUntilMs = 0;
+String activeVoucherCode;
 
 const char* kGpsLogPath = "/gps_log.csv";
 const char* kSessionLogPath = "/sessions.log";
+const char* kVouchersJsonPath = "/data/vouchers.json";
+const char* kSessionsJsonPath = "/data/sessions.json";
 
 bool isInternetReady() {
   const LteData lte = lteGetData();
@@ -32,6 +37,10 @@ bool isInternetReady() {
 
 bool shouldUseCaptivePortal() {
   return !isInternetReady();
+}
+
+bool hasActiveVoucherSession() {
+  return activeSessionUntilMs != 0 && millis() < activeSessionUntilMs;
 }
 
 String htmlEscape(const String& value) {
@@ -118,28 +127,38 @@ bool tryServeFromSd(const String& requestPath) {
     path = "/index.html";
   }
 
+  String candidates[4];
+  size_t candidateCount = 0;
+  candidates[candidateCount++] = path;
+  if (path.startsWith("/portal/")) {
+    candidates[candidateCount++] = path.substring(strlen("/portal"));
+  }
+
   const String roots[2] = {"/www", "/sd/www"};
   for (size_t i = 0; i < 2; ++i) {
-    String sdPath = roots[i] + path;
-    if (SD.exists(sdPath)) {
-      File file = SD.open(sdPath, FILE_READ);
-      if (!file) {
-        continue;
+    for (size_t c = 0; c < candidateCount; ++c) {
+      const String effectivePath = candidates[c];
+      String sdPath = roots[i] + effectivePath;
+      if (SD.exists(sdPath)) {
+        File file = SD.open(sdPath, FILE_READ);
+        if (!file) {
+          continue;
+        }
+        server.streamFile(file, getContentType(effectivePath));
+        file.close();
+        return true;
       }
-      server.streamFile(file, getContentType(path));
-      file.close();
-      return true;
-    }
 
-    sdPath = roots[i] + path + ".html";
-    if (SD.exists(sdPath)) {
-      File file = SD.open(sdPath, FILE_READ);
-      if (!file) {
-        continue;
+      sdPath = roots[i] + effectivePath + ".html";
+      if (SD.exists(sdPath)) {
+        File file = SD.open(sdPath, FILE_READ);
+        if (!file) {
+          continue;
+        }
+        server.streamFile(file, "text/html");
+        file.close();
+        return true;
       }
-      server.streamFile(file, "text/html");
-      file.close();
-      return true;
     }
   }
 
@@ -164,6 +183,87 @@ String readSdFileSnippet(const char* path, size_t maxLen) {
 void sendJson(const String& payload) {
   server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
   server.send(200, "application/json", payload);
+}
+
+File openSdFileAnyRoot(const char* relativePath, const char* mode) {
+  const String roots[2] = {"", "/sd"};
+  for (size_t i = 0; i < 2; ++i) {
+    String full = roots[i] + String(relativePath);
+    File f = SD.open(full, mode);
+    if (f) {
+      return f;
+    }
+  }
+  return File();
+}
+
+bool readJsonFromSd(const char* relativePath, JsonDocument& doc) {
+  File file = openSdFileAnyRoot(relativePath, FILE_READ);
+  if (!file) {
+    return false;
+  }
+  const DeserializationError err = deserializeJson(doc, file);
+  file.close();
+  return !err;
+}
+
+bool writeJsonToSd(const char* relativePath, const JsonDocument& doc) {
+  const String roots[2] = {"", "/sd"};
+  for (size_t i = 0; i < 2; ++i) {
+    const String full = roots[i] + String(relativePath);
+    if (SD.exists(full)) {
+      SD.remove(full);
+    }
+    File file = SD.open(full, FILE_WRITE);
+    if (!file) {
+      continue;
+    }
+    serializeJson(doc, file);
+    file.close();
+    return true;
+  }
+  return false;
+}
+
+bool findVoucher(const String& code, int& limitMinutes, int& limitMb) {
+  JsonDocument doc;
+  if (!readJsonFromSd(kVouchersJsonPath, doc)) {
+    return false;
+  }
+  JsonArray arr = doc.as<JsonArray>();
+  if (arr.isNull()) {
+    return false;
+  }
+  for (JsonObject obj : arr) {
+    const String voucherCode = String(obj["code"] | "");
+    if (voucherCode.equalsIgnoreCase(code)) {
+      limitMinutes = obj["limit_minutes"] | 60;
+      limitMb = obj["limit_mb"] | 500;
+      return true;
+    }
+  }
+  return false;
+}
+
+bool appendSession(const String& code, int limitMinutes, int limitMb) {
+  JsonDocument doc;
+  if (!readJsonFromSd(kSessionsJsonPath, doc)) {
+    doc.to<JsonArray>();
+  }
+
+  JsonArray arr = doc.as<JsonArray>();
+  if (arr.isNull()) {
+    arr = doc.to<JsonArray>();
+  }
+
+  JsonObject entry = arr.add<JsonObject>();
+  entry["code"] = code;
+  entry["limit_minutes"] = limitMinutes;
+  entry["limit_mb"] = limitMb;
+  entry["start_ms"] = millis();
+  entry["active"] = true;
+
+  return writeJsonToSd(kSessionsJsonPath, doc);
 }
 
 void sendPortalRedirect() {
@@ -231,6 +331,7 @@ void handleStatus() {
   payload += "\"responsive\":" + String(status.responsive ? "true" : "false");
   payload += ",\"simReady\":" + String(status.simReady ? "true" : "false");
   payload += ",\"dataConnected\":" + String(status.dataConnected ? "true" : "false");
+  payload += ",\"pdpActive\":" + String(status.pdpActive ? "true" : "false");
   payload += ",\"rssi\":" + String(status.rssi);
   payload += ",\"cgatt\":" + String(status.cgatt);
   payload += ",\"apn\":\"" + escapeJson(status.apn) + "\"";
@@ -240,17 +341,73 @@ void handleStatus() {
 }
 
 void handlePortalStatus() {
+  const LteData status = lteGetData();
+  const bool online = isInternetReady() && hasActiveVoucherSession();
+  String reason = "Waiting for modem";
+  if (!status.responsive) {
+    reason = "No AT response";
+  } else if (!status.simReady) {
+    reason = "SIM not ready";
+  } else if (!status.pdpActive) {
+    reason = "PDP inactive (check APN)";
+  } else if (status.cgatt != 1) {
+    reason = "Packet not attached";
+  } else if (!hasActiveVoucherSession()) {
+    reason = "Voucher required";
+  } else {
+    reason = "PPP not established yet";
+  }
+
   String payload;
-  payload.reserve(64);
+  payload.reserve(220);
   payload += "{\"ok\":true,\"signedIn\":";
-  payload += (portalSignedIn || isInternetReady()) ? "true" : "false";
+  payload += (portalSignedIn || online) ? "true" : "false";
+  payload += ",\"online\":";
+  payload += online ? "true" : "false";
+  payload += ",\"reason\":\"" + escapeJson(reason) + "\"";
+  payload += ",\"voucher\":\"" + escapeJson(activeVoucherCode) + "\"";
+  payload += ",\"pdpActive\":" + String(status.pdpActive ? "true" : "false");
+  payload += ",\"cgatt\":" + String(status.cgatt);
+  payload += ",\"ipAddress\":\"" + escapeJson(status.ipAddress) + "\"";
   payload += "}";
   sendJson(payload);
 }
 
 void handlePortalSignin() {
+  String voucherCode;
+  if (server.hasArg("plain")) {
+    JsonDocument req;
+    if (!deserializeJson(req, server.arg("plain"))) {
+      voucherCode = String(req["code"] | "");
+    }
+  }
+  if (voucherCode.length() == 0 && server.hasArg("code")) {
+    voucherCode = server.arg("code");
+  }
+  voucherCode.trim();
+
+  if (voucherCode.length() == 0) {
+    sendJson("{\"ok\":false,\"reason\":\"Voucher code required\"}");
+    return;
+  }
+
+  int limitMinutes = 0;
+  int limitMb = 0;
+  if (!findVoucher(voucherCode, limitMinutes, limitMb)) {
+    sendJson("{\"ok\":false,\"reason\":\"Invalid voucher\"}");
+    return;
+  }
+
+  if (!appendSession(voucherCode, limitMinutes, limitMb)) {
+    sendJson("{\"ok\":false,\"reason\":\"Failed to persist session\"}");
+    return;
+  }
+
   portalSignedIn = true;
-  sendJson("{\"ok\":true}");
+  activeVoucherCode = voucherCode;
+  activeSessionUntilMs = millis() + static_cast<unsigned long>(limitMinutes) * 60000UL;
+  lteStartInternetGateway();
+  handlePortalStatus();
 }
 
 void handleSmsInbox() {
@@ -275,6 +432,7 @@ void handleModemHealth() {
   payload += ",\"cgatt\":" + String(status.cgatt);
   payload += ",\"simReady\":" + String(status.simReady ? "true" : "false");
   payload += ",\"dataConnected\":" + String(status.dataConnected ? "true" : "false");
+  payload += ",\"pdpActive\":" + String(status.pdpActive ? "true" : "false");
   payload += ",\"ipAddress\":\"" + escapeJson(status.ipAddress) + "\"";
   payload += "}";
   sendJson(payload);
@@ -291,6 +449,7 @@ void handleNetInfo() {
   payload += "{\"dataConnected\":" + String(status.dataConnected ? "true" : "false");
   payload += ",\"rssi\":" + String(status.rssi);
   payload += ",\"simReady\":" + String(status.simReady ? "true" : "false");
+  payload += ",\"pdpActive\":" + String(status.pdpActive ? "true" : "false");
   payload += ",\"creg\":" + String(status.creg);
   payload += ",\"cereg\":" + String(status.cereg);
   payload += ",\"cgatt\":" + String(status.cgatt);
@@ -408,6 +567,8 @@ void webInit() {
   }
 
   server.on("/", HTTP_ANY, handleRoot);
+  server.on("/portal", HTTP_ANY, handleRoot);
+  server.on("/portal/", HTTP_ANY, handleRoot);
   server.on("/status", HTTP_ANY, handleStatus);
   server.on("/portal/status", HTTP_GET, handlePortalStatus);
   server.on("/portal/signin", HTTP_POST, handlePortalSignin);

@@ -6,6 +6,7 @@ struct LteData {
   bool responsive;
   bool simReady;
   bool dataConnected;
+  bool pdpActive;
   int rssi;
   int ber;
   int creg;
